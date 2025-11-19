@@ -1,6 +1,6 @@
 module github.com/arvinpaundra/sider
 
-go 1.20
+go 1.21
 
 require (
 	go.uber.org/multierr v1.10.0 // indirect

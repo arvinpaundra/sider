@@ -7,37 +7,53 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/arvinpaundra/sider/internal/log"
 	"github.com/arvinpaundra/sider/internal/resp"
 	"go.uber.org/zap"
 )
 
+const nShard = 1000
+
 type Server struct {
 	listener     net.Listener
 	lastClientId int64
+	isStarted    atomic.Bool
 	logger       *zap.Logger
 
 	cmu     sync.Mutex
 	clients map[int64]net.Conn
 
-	smu     sync.Mutex
-	storage map[string]string
+	smu     [nShard]sync.RWMutex
+	storage [nShard]map[string]string
 }
 
 func NewServer(listner net.Listener) *Server {
-	return &Server{
+	server := &Server{
 		listener:     listner,
 		clients:      make(map[int64]net.Conn),
 		lastClientId: 0,
+		isStarted:    atomic.Bool{},
 		cmu:          sync.Mutex{},
 		logger:       log.New(),
-		storage:      make(map[string]string),
+		smu:          [nShard]sync.RWMutex{},
+		storage:      [nShard]map[string]string{},
 	}
+
+	for i := 0; i < nShard; i++ {
+		server.storage[i] = make(map[string]string)
+	}
+
+	return server
 }
 
 func (s *Server) Start() error {
-	s.logger.Info(fmt.Sprintf("listening on %s", s.listener.Addr()))
+	s.logger.Debug(fmt.Sprintf("listening on %s", s.listener.Addr()))
+
+	if !s.isStarted.CompareAndSwap(false, true) {
+		return fmt.Errorf("server is already started")
+	}
 
 	for {
 		conn, err := s.listener.Accept()
@@ -47,10 +63,11 @@ func (s *Server) Start() error {
 
 		s.cmu.Lock()
 		s.lastClientId += 1
-		s.clients[s.lastClientId] = conn
+		clientId := s.lastClientId
+		s.clients[clientId] = conn
 		s.cmu.Unlock()
 
-		go s.handleConnection(s.lastClientId, conn)
+		go s.handleConnection(clientId, conn)
 	}
 }
 
@@ -64,7 +81,7 @@ func (s *Server) Stop() error {
 		return err
 	}
 
-	s.logger.Info("server closed")
+	s.logger.Debug("server closed")
 
 	return nil
 }
@@ -73,12 +90,20 @@ func (s *Server) handleConnection(clientId int64, conn net.Conn) {
 	s.logger.With(
 		zap.Int64("client_id", clientId),
 		zap.String("host", conn.RemoteAddr().String()),
-	).Info("client connected")
+	).Debug("client connected")
 
 	defer s.disconnect(clientId, conn)
 
+	reader := resp.NewReader(conn)
+	writer := newBufferWriter(conn)
+	go func() {
+		// TODO: handle shutdown for the buffered writer.
+		if err := writer.Start(); err != nil {
+			s.logger.Error(err.Error())
+		}
+	}()
+
 	for {
-		reader := resp.NewReader(conn)
 		req, err := reader.Read()
 		if err != nil && !errors.Is(err, io.EOF) {
 			if errors.Is(err, net.ErrClosed) {
@@ -90,10 +115,6 @@ func (s *Server) handleConnection(clientId int64, conn net.Conn) {
 		}
 
 		if len(req.Values) == 0 {
-			s.logger.With(
-				zap.Int64("client_id", clientId),
-			).Error("missing command")
-
 			break
 		}
 
@@ -101,11 +122,11 @@ func (s *Server) handleConnection(clientId int64, conn net.Conn) {
 
 		switch strings.ToUpper(cmd) {
 		case "GET":
-			err = s.handleGetCommand(conn, req)
+			err = s.handleGetCommand(writer, req)
 		case "SET":
-			err = s.handleSetCommand(conn, req)
+			err = s.handleSetCommand(writer, req)
 		default:
-			_, err = conn.Write([]byte("+ERR unknown command\r\n"))
+			_, err = writer.Write([]byte("-ERR unknown command\r\n"))
 		}
 
 		if err != nil {
@@ -118,16 +139,17 @@ func (s *Server) handleConnection(clientId int64, conn net.Conn) {
 func (s *Server) disconnect(id int64, conn net.Conn) error {
 	s.logger.With(
 		zap.Int64("client_id", id),
-	).Info("disconnecting client")
+	).Debug("disconnecting client")
 
 	s.cmu.Lock()
+	defer s.cmu.Unlock()
+
 	_, ok := s.clients[id]
 	if !ok {
 		return nil
 	}
 
 	delete(s.clients, id)
-	s.cmu.Unlock()
 
 	err := conn.Close()
 	if err != nil {
@@ -139,4 +161,19 @@ func (s *Server) disconnect(id int64, conn net.Conn) error {
 	}
 
 	return nil
+}
+
+func calculateShard(s string) int {
+	const (
+		offset64 = 14695981039346656037
+		prime64  = 1099511628211
+	)
+
+	hash := uint64(offset64)
+	for i := 0; i < len(s); i++ {
+		hash ^= uint64(s[i])
+		hash *= prime64
+	}
+
+	return int(hash % uint64(nShard))
 }
