@@ -50,3 +50,21 @@ func (s *Server) handleSetCommand(writer io.Writer, val resp.RValue) error {
 
 	return err
 }
+
+func (s *Server) handleDelete(writer io.Writer, val resp.RValue) error {
+	if len(val.Values) < 2 {
+		_, err := writer.Write([]byte("-ERR missing key\r\n"))
+		return err
+	}
+
+	key := val.Values[1].Str
+
+	shard := calculateShard(key)
+	s.smu[shard].Lock()
+	delete(s.storage[shard], key)
+	s.smu[shard].Unlock()
+
+	_, err := writer.Write([]byte("+OK\r\n"))
+
+	return err
+}

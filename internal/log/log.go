@@ -13,7 +13,7 @@ func New() *zap.Logger {
 		Development:      true,
 		OutputPaths:      []string{"stdout"},
 		ErrorOutputPaths: []string{"stderr"},
-		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
+		Level:            zap.NewAtomicLevelAt(zap.DebugLevel),
 		EncoderConfig: zapcore.EncoderConfig{
 			MessageKey:  "message",
 			LevelKey:    "level",

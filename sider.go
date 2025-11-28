@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/arvinpaundra/sider/internal/log"
 	"github.com/arvinpaundra/sider/internal/resp"
 	"go.uber.org/zap"
 )
@@ -36,12 +35,12 @@ func NewServer(listner net.Listener) *Server {
 		lastClientId: 0,
 		isStarted:    atomic.Bool{},
 		cmu:          sync.Mutex{},
-		logger:       log.New(),
+		logger:       zap.NewNop(),
 		smu:          [nShard]sync.RWMutex{},
 		storage:      [nShard]map[string]string{},
 	}
 
-	for i := 0; i < nShard; i++ {
+	for i := range nShard {
 		server.storage[i] = make(map[string]string)
 	}
 
@@ -97,7 +96,6 @@ func (s *Server) handleConnection(clientId int64, conn net.Conn) {
 	reader := resp.NewReader(conn)
 	writer := newBufferWriter(conn)
 	go func() {
-		// TODO: handle shutdown for the buffered writer.
 		if err := writer.Start(); err != nil {
 			s.logger.Error(err.Error())
 		}
@@ -125,6 +123,8 @@ func (s *Server) handleConnection(clientId int64, conn net.Conn) {
 			err = s.handleGetCommand(writer, req)
 		case "SET":
 			err = s.handleSetCommand(writer, req)
+		case "DEL":
+			err = s.handleDelete(writer, req)
 		default:
 			_, err = writer.Write([]byte("-ERR unknown command\r\n"))
 		}

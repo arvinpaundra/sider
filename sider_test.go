@@ -157,6 +157,12 @@ func TestServer_SetAndGetCommand(t *testing.T) {
 // cpu: Apple M2
 // BenchmarkServer_SetCommand
 // BenchmarkServer_SetCommand-8    10000000               292.8 ns/op         3415554 ops/sec           402 B/op         16 allocs/op
+
+// goos: darwin
+// goarch: arm64
+// pkg: github.com/arvinpaundra/sider
+// cpu: Apple M2
+// BenchmarkServer_SetCommand-8    10000000               219.3 ns/op         4559562 ops/sec           307 B/op          6 allocs/op
 func BenchmarkServer_SetCommand(b *testing.B) {
 	_ = os.Remove(sockfilePath)
 
@@ -188,16 +194,16 @@ func BenchmarkServer_SetCommand(b *testing.B) {
 
 		pipelineSize := 1000
 
-		buff := make([]byte, 40960)
+		buff := make([]byte, 4096000)
 		writeBuffer := bytes.Buffer{}
 		count := 0
 		for pb.Next() {
-			writeBuffer.WriteString("*3\r\n$3\r\nset\r\n$12\r\n")
-			for i := 0; i < 12; i++ {
+			writeBuffer.WriteString("*3\r\n$3\r\nset\r\n$8\r\n")
+			for range 8 {
 				writeBuffer.WriteByte(byte(randomizer.Int31()%96 + 32))
 			}
-			writeBuffer.WriteString("\r\n$12\r\n")
-			for i := 0; i < 12; i++ {
+			writeBuffer.WriteString("\r\n$8\r\n")
+			for range 8 {
 				writeBuffer.WriteByte(byte(randomizer.Int31()%96 + 32))
 			}
 			writeBuffer.WriteString("\r\n")
